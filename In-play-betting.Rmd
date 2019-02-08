@@ -1,0 +1,526 @@
+---
+title: "IN-PLAY BETTING IN FOOTBALL"
+author: "Henrik Sergoyan"
+date: "December 5, 2017"
+output: pdf_document
+---
+In many sports games, spectators are interested in predicting the outcomes and placing their bets based on those predictions. Aside from traditional approaches, there are also statistical methods that help to make a good prediction. In this project, we use several statistical methods such as Logistic Regression, Decision trees, Naive Bayes classifier, KNN, Random Forest to build models that predict the outcome of a football match based on the statistics of the first half. Those models can be useful for in-play betting.
+
+First, let us get acquainted with the data that we are going to use.
+
+```{r, warning=FALSE, message=FALSE}
+library(readxl)
+imb <- read_excel("Copy of IMB403-XLS-ENG.xlsx")
+colnames(imb)[4]<-"RED_H"
+colnames(imb)[5]<-"RED_A"
+str(imb)
+```
+
+The dataset imb contains the statistics of the first half of past English Premier
+League (EPL) games as well as the outcomes of those games. The descriptions of variables are the following:
+
+HTGD - Half-time goal difference (Number of goals scored by home team - Number of        goals scored by away team at half-time)
+
+FGS -	First Goal Scored, FGS = 1 means home team scored the 1st goal, 0 denotes         that away team scored the 1st goal, 2 denotes none of them scored goal
+
+RED_H - Red cards conceded by the home team
+
+RED_A	- Red cards conceded by the away team
+
+POINTS_H - Points earned by the home team in the league until that match
+
+POINTS_A - Points earned by the away team in the league until the match
+
+TOTAL_H_P - Total points earned by the home team in the previous season
+
+TOTAL_A_P - Total points earned by the away team in the previous season
+
+Match_O - Match outcome, 2 - home team win, 1 - draw, 0 - away team win
+
+Match_O1 - Match outcome, 1- home team win, 0 - home team not win
+
+
+Match_O and Match_O1 variables are numeric so let's convert these variables to a more appropriate class.
+
+```{r, warning=FALSE, message=FALSE}
+imb <- imb[,-1]
+imb$Match_O <- factor(imb$Match_O, levels = c(0,1,2), labels = c("Lose","Draw","Win")) 
+imb$Match_O1 <- factor(imb$Match_O1, levels = c(0,1), labels = c("Not win","Win"))
+```
+
+Now, let us call all the libraries that we will need when building our models.
+
+```{r, warning=FALSE, message=FALSE}
+library(caret)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(class)
+library(ROCR)
+library(pROC)
+library(randomForest)
+library(nnet)
+library(reshape2)
+library(ggplot2)
+```
+
+
+
+
+
+>> Two-class Classification
+
+
+
+
+
+First, let's use Match_O1 variable for making predictions. That is, we want to predict whether the home team will win or not win the match.
+
+Let's start by removing the variable Match_O and dividing the data into training and testing sets.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1)
+trainIndex<-createDataPartition(imb$Match_O1, p=.8, list=FALSE)
+Train<-imb[trainIndex,-9]
+Test<-imb[-trainIndex,-9]
+```
+
+
+
+> 1. Naive Bayes Classifier
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_nv1<-naiveBayes(Match_O1~., data=Train, laplace=1)
+pred<-predict(model_nv1, newdata=Test)
+confusionMatrix(data=pred, reference=Test$Match_O1, positive="Win")
+
+pr1<-predict(model_nv1, newdata = Test, type="raw")
+P_test<-prediction(pr1[,2], Test$Match_O1)
+perf<-performance(P_test,"tpr","fpr")
+plot(perf)
+performance(P_test,"auc")@y.values
+```
+
+
+The overall accuracy of this model is 0.7525.
+Sensitivity and Specificity are 0.7917 and 0.7170 respectively.
+AUC, that is, the area under the curve is approximately 0.795, which is close to 1 so our model is good.
+
+
+
+> 2. Decision Tree
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_dt1<-rpart(Match_O1~., data=Train)
+prp(model_dt1, type=1, extra=1)
+pred_class<-predict(model_dt1, Test, type="class")
+confusionMatrix(pred_class, Test$Match_O1)
+
+pr1<-predict(model_dt1, Test)
+P_test<-prediction(pr1[,2], Test$Match_O1)
+perf<-performance(P_test,"tpr","fpr")
+plot(perf)
+performance(P_test,"auc")@y.values
+```
+
+
+The overall accuracy of this model is 0.736.
+Sensitivity and Specificity are 0.8176 and 0.6458 respectively.
+AUC is approximately 0.791, which is again close to 1.
+
+
+
+> 3. KNN
+
+
+
+```{r, warning=FALSE, message=FALSE}
+scaled_train<-as.data.frame(scale(Train[,-9]))
+scaled_test<-as.data.frame(scale(Test[,-9]))
+knn_1<-knn(scaled_train, scaled_test, Train$Match_O1, k=21)
+confusionMatrix(knn_1, Test$Match_O1)
+
+knn_p<-knn(scaled_train, scaled_test, Train$Match_O1, k=21, prob=T)
+a<-multiclass.roc(Test$Match_O1,as.ordered(knn_p))
+a$auc
+```
+
+
+The overall accuracy of this model is 0.7162.
+Sensitivity and Specificity are 0.7358 and 0.6944 respectively.
+AUC is approximately 0.715.
+
+
+
+> 4. Random Forest
+
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1)
+model_rf<-randomForest(Match_O1~., data = Train, ntree = 50, do.trace = T, importance = T)
+model_rf$importance
+model_rf$err.rate
+varImpPlot(model_rf)
+#The most important one is the HTGD as the average decrease in accuracy when it does not participate into node split compared to when it takes part into splitting is the highest.
+
+pred_class_rf<-predict(model_rf, newdata=Test, type="class")
+confusionMatrix(pred_class_rf, Test$Match_O1, positive = "Win")
+
+pred_prob_rf<-predict(model_rf, newdata = Test, type = "prob")
+p_test_rf<-prediction(pred_prob_rf[,2], Test$Match_O1)
+perf_rf<-performance(p_test_rf, "tpr", "fpr")
+plot(perf_rf)
+performance(p_test_rf, "auc")@y.values
+```
+
+
+The overall accuracy of this model is 0.7459.
+Sensitivity and Specificity are 0.6736 and 0.8113 respectively.
+AUC is approximately 0.815, which is again close to 1.
+
+Now, let's run the Random Forest with Specified MTry value to see how it changes the model.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1)
+trc<-trainControl(method = "cv", number = 10)
+mtry_grid<-expand.grid(mtry=c(5:25))
+model_mtry<-train(Match_O1~., data = Train, trControl=trc, method = "rf", ntree=25, tuneGrid=mtry_grid)
+#model_mtry$results
+set.seed(1)
+pred_class_mtry<-predict(model_mtry, newdata=Test, type="raw")
+confusionMatrix(pred_class_mtry, Test$Match_O1, positive = "Win")
+
+pred_prob_mtry<-predict(model_mtry, newdata=Test, type="prob")
+p_test_mtry<-prediction(pred_prob_mtry[,2], Test$Match_O1)
+perf_mtry<-performance(p_test_mtry, "tpr", "fpr")
+plot(perf_mtry)
+performance(p_test_mtry, "auc")@y.values
+```
+
+
+The overall accuracy of this model is 0.7624.
+Sensitivity and Specificity are 0.7361 and 0.7862 respectively.
+AUC is approximately 0.795.
+
+As we can see, the overall accuracy, as well as the Sensitivity, slightly increased. However, there was a slight decrease in Specificity and AUC.
+
+
+
+> 5. Binomial Logistic Regression
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_blg<-glm(formula=Match_O1~., data=Train, family = "binomial")
+pr1<-predict(model_blg, newdata = Test, type="response")
+table(Test$Match_O1, pr1>0.5)
+pr_class<-ifelse(pr1>0.5, "Win", "Not win")
+caret::confusionMatrix(pr_class, Test$Match_O1, positive="Win")
+
+P_Test<-prediction(pr1, Test$Match_O1)
+perf<- performance(P_Test, "tpr", "fpr")
+plot(perf)
+performance(P_test,"auc")@y.values
+```
+
+The overall accuracy of this model is 0.7459.
+Sensitivity and Specificity are 0.6944 and 0.7925 respectively.
+AUC is approximately 0.791, which is again close to 1.
+
+
+
+To sum up, Random Forest and Naive Bayes Classifier gave the highest overall accuracy and AUC, while Decision tree and Logistic Regression gave the highest Sensitivity and Specificity respectively. However, the differences between the results of all five methods were not that significant.
+
+
+
+
+>> Multi-class Classification
+
+
+
+
+
+For multi-class classification, we will use Match_O variable for making predictions. That is, we will try to predict whether the home team will win, draw or lose the match.
+
+Again, let's start by dividing the data into training and testing sets - but this time removing the variable Match_O1 from the data.
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1)
+trainIndex2<-createDataPartition(imb$Match_O, p=.8, list=FALSE)
+Train2<-imb[trainIndex2,-10]
+Test2<-imb[-trainIndex2,-10]
+```
+
+
+
+> 1. Naive Bayes Classifier
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_nv<-naiveBayes(Match_O~., data=Train2, laplace=1)
+pred<-predict(model_nv, newdata=Test2)
+confusionMatrix(data=pred, reference=Test2$Match_O, positive="Win")
+
+pred_prob<-predict(model_nv, newdata = Test2, type = "raw")
+b<-c()
+for(i in 1:3)
+{
+  a<-multiclass.roc(Test2$Match_O, pred_prob[,i])
+  b[i]<-a$auc                  
+}
+b
+```
+
+
+The overall accuracy of this model is 0.6722. However, let's check the Sensitivity and Specificity of our model as well.
+
+1. For class Lose, the Sensitivity and Specificity are 0.7821 and 0.8393 respectively.
+
+2. For class Draw, the Sensitivity and Specificity are 0.30000 and 0.93243 respectively.
+
+3. For class Win, the Sensitivity and Specificity are 0.8194 and 0.6962 respectively.
+
+The performance of the model(AUC curve value) for class:
+
+1. Lose is 0.7916
+
+2. Draw is 0.6543
+
+3. Win is 0.8200
+
+
+
+> 2. Decision Tree
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_dt<-rpart(Match_O~., data=Train2)
+prp(model_dt, type=1, extra=1)
+pred_class<-predict(model_dt, Test2, type="class")
+confusionMatrix(pred_class, Test2$Match_O)
+
+pred_prob<-predict(model_dt, newdata = Test2)
+b<-c()
+for(i in 1:3)
+{
+  a<-multiclass.roc(Test2$Match_O, pred_prob[,i])
+  b[i]<-a$auc                  
+}
+b
+```
+
+
+The overall accuracy of the model is 0.6523. Now, the Sensitivity and Specificity.
+
+1. For class Lose, the Sensitivity and Specificity are 0.8077 and 0.8214 respectively.
+
+2. For class Draw, the Sensitivity and Specificity are 0.10000 and 0.95045 respectively.
+
+3. For class Win, the Sensitivity and Specificity are 0.8750 and 0.6582 respectively.
+
+The performance of the model(AUC curve value) for class:
+
+1. Lose is 0.6935
+
+2. Draw is 0.6781
+
+3. Win is 0.8084
+
+
+
+> 3. KNN
+
+
+
+```{r, warning=FALSE, message=FALSE}
+scaled_train2<-as.data.frame(scale(Train2[,-9]))
+scaled_test2<-as.data.frame(scale(Test2[,-9]))
+knn<-knn(scaled_train2, scaled_test2, Train2$Match_O, k=21)
+confusionMatrix(knn, Test2$Match_O)
+
+knn_p<-knn(scaled_train2, scaled_test2, Train2$Match_O, k=21, prob=T)
+a<-multiclass.roc(Test2$Match_O, attr(knn_p,"prob"))
+a$auc
+```
+
+
+The overall accuracy of the model is 0.6556.
+
+1. For class Lose, the Sensitivity and Specificity are 0.7564 and 0.8482 respectively.
+
+2. For class Draw, the Sensitivity and Specificity are 0.3375 and 0.8874 respectively.
+
+3. For class Win, the Sensitivity and Specificity are 0.7778 and 0.7152 respectively.
+
+The Multi-class area under the curve is approximately 0.6271.
+
+
+> 4. Random Forest
+
+
+
+```{r, warning=FALSE, message=FALSE}
+set.seed(1)
+model_rf1<-randomForest(Match_O~., data = Train2, ntree = 50, do.trace = T)
+pred_class_rf1<-predict(model_rf1, newdata=Test2, type="class")
+confusionMatrix(pred_class_rf1, Test2$Match_O, positive = "Win")
+
+pred_prob_rf1<-predict(model_rf1, newdata = Test2, type = "prob")
+b<-c()
+for(i in 1:3)
+{
+  a<-multiclass.roc(Test2$Match_O, pred_prob_rf1[,i])
+  b[i]<-a$auc                  
+}
+b
+```
+
+
+The overall accuracy of the model is 0.6854.
+
+1. For class Lose, the Sensitivity and Specificity are 0.7692 and 0.8705 respectively.
+
+2. For class Draw, the Sensitivity and Specificity are 0.30000 and 0.91441 respectively.
+
+3. For class Win, the Sensitivity and Specificity are 0.8542 and 0.7025 respectively.
+
+The performance of the model(AUC curve value) for class:
+
+1. Lose is 0.8319
+
+2. Draw is 0.6598
+
+3. Win is 0.8340
+
+
+
+> 5. Multinomial Logistic Regression
+
+
+
+```{r, warning=FALSE, message=FALSE}
+model_mlg<-multinom(Match_O ~ ., data=Train2)
+summary(model_mlg)
+```
+
+A one-unit increase in the variable HTGD is associated with the increase in the log odds of having draw vs away team win (ln(P(Match_O=Draw)/P(Match_O=Lose)))  in the amount of 0.31.
+
+A one-unit increase in the variable HTGD is associated with the increase in the log odds of having home team win vs away team win (ln(P(Match_O=WIn)/P(Match_O=Lose)))  in the amount of 1.44.
+
+A one-unit increase in the variable RED_A is associated with the increase in the log odds of having home team win vs away team win in the amount of 1.09.
+
+A one-unit increase in the variable RED_H is associated with the decrease in the log odds of having home team win vs away team win in the amount of 0.84.
+
+
+```{r, warning=FALSE, message=FALSE}
+#Calculating Z-score
+z<-summary(model_mlg)$coefficients/summary(model_mlg)$standard.errors
+z
+#2-tailed z test for calculating p-value
+p<- (1-pnorm(abs(z),0,1))*2
+
+exp(coef(model_mlg))
+# changes Log odds to odds,
+```
+
+
+One unit increase in HTGD increases odds of having draw vs away team win (P(Match_O=Draw)/P(Match_O=Lose)) by 36 %.
+One unit increase in HTGD increases odds of having home team win vs away team win (P(Match_O=Win)/P(Match_O=Lose)) by 321 %. 
+
+```{r, warning=FALSE, message=FALSE}
+#Let's see probabilities of first 10 cases
+head(pp<-fitted(model_mlg))
+head(pp,10)
+
+pred_class <- predict (model_mlg, Test2)
+confusionMatrix(pred_class, Test2$Match_O)
+
+pr_prob<-predict(model_mlg, newdata = Test2, type="probs")
+b<-c()
+for(i in 1:3)
+{
+  a<-multiclass.roc(Test2$Match_O, pr_prob[,i])
+  b[i]<-a$auc                  
+}
+b
+```
+
+
+The overall accuracy of the model is 0.6589 .
+
+1. For class Lose, the Sensitivity and Specificity are 0.7051 and 0.8527 respectively.
+
+2. For class Draw, the Sensitivity and Specificity are 0.31250 and 0.90991 respectively.
+
+3. For class Win, the Sensitivity and Specificity are 0.8264 and 0.6835 respectively.
+
+The performance of the model(AUC curve value) for class:
+
+1. Lose is 0.8471
+
+2. Draw is 0.6889
+
+3. Win is 0.8379
+
+
+```{r, warning=FALSE, message=FALSE}
+##visualization
+
+newmodel<-multinom(Match_O ~ HTGD +FGS, data=Train2)
+
+## store the predicted probabilities for each value of HTGD and FGS
+pp.fgs <- cbind(Test2, predict(newmodel, newdata = Test2, type = "probs", se = TRUE))
+by(pp.fgs[,10:12], pp.fgs$FGS,colMeans)
+pp.fgs<-pp.fgs[,c(1,2,10:12)]
+
+#melting for ggplot 
+lpp<-melt(pp.fgs,id.vars=c("HTGD", "FGS"), value.name="probability")
+
+## plot predicted probabilities across htgd values for each level of fgs
+##facetted by Match_O
+ggplot(lpp, aes(x = HTGD, y = probability, colour = FGS)) + geom_line() + facet_grid(variable ~., scales = "free")
+```
+
+The graph shows the probability of each outcome of the match based on half time goal difference between teams and which team scored the first goal. For example, the probability of the win of home team increases and reaches 1 when HTGD gets more than 3 (after first half home team wins by three or more goals).
+
+We also collected some recent data from English Premier League matches and tried to check the accuracy of multinomial regression model for those matches.
+
+
+```{r, warning=FALSE, message=FALSE}
+test<-read_excel("EPL-test.xlsx")
+colnames(test)[4]<-"RED_H"
+colnames(test)[5]<-"RED_A"
+test <- test[,-1]
+test$Match_O <- factor(test$Match_O, levels = c(0,1,2), labels = c("Lose","Draw","Win")) 
+pred_class <- predict (model_mlg, test)
+confusionMatrix(pred_class, test$Match_O)
+
+pr_prob<-predict(model_mlg, newdata = test, type="probs")
+b<-c()
+for(i in 1:3)
+{
+  a<-multiclass.roc(test$Match_O, pr_prob[,i])
+  b[i]<-a$auc                  
+}
+b                  
+```
+
+ As you can see, our model predicted 7 out of 8 matches' outcome correctly.
+
+In conclusion, in the case of the Multi-class Classification, we obtain the highest overall accuracy, which is 0.6854, by Random Forest method. 
+
+The highest Sensitivity, Specificity and AUC for Class Lose are 0.8077, 0.8705 and 0.8471, and we obtain them using Decision tree, Random Forest and Multinomial Logistic Regression respectfully. 
+
+The highest Sensitivity, Specificity and AUC for Class Draw are 0.3375, 0.95045 and 0.6889, and we obtain them using Knn, Decision tree and Multinomial Logistic Regression respectfully. 
+
+The highest Sensitivity, Specificity and AUC for Class Win are 0.8750, 0.7152 and 0.8379, and we obtain them using Decision tree, KNN and Multinomial Logistic Regression respectfully. 
+
+So, after the first half of a football match, if you want to place a bet on the Home team winning and want to test your prediction, then use the Decision tree model, and in the case of betting on the home team not winning - KNN model.
+The Decision Tree method is also useful when betting on the home team losing or the match not ending in a tie. And in case of betting that the home team will not lose, the Random Forest method will be the most useful one.
